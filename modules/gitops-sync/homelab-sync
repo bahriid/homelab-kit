@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# homelab-sync: fast-forward the stack repo and apply what changed. Run by homelab-sync.timer.
+set -euo pipefail
+. /etc/homelab-sync.env           # GITOPS_DIR, GITOPS_BRANCH
+LOG=/var/log/homelab-sync.log
+cd "$GITOPS_DIR"
+
+timeout 60 git fetch -q origin "$GITOPS_BRANCH"
+old=$(git rev-parse HEAD); new=$(git rev-parse "origin/$GITOPS_BRANCH")
+[ "$old" = "$new" ] && exit 0
+echo "$(date -Is) $old -> $new" >> "$LOG"
+git merge -q --ff-only "origin/$GITOPS_BRANCH" || { echo "  FAILED fast-forward (local edits on the server?)" >> "$LOG"; exit 1; }
+
+# nearest folder (walking up) that has a docker-compose.yml, for every changed file
+declare -A dirs=()
+reload=0
+while IFS= read -r f; do
+  if [ "$(basename "$f")" = Caddyfile ]; then reload=1; fi
+  d=$(dirname "$f")
+  while [ "$d" != . ] && [ ! -f "$d/docker-compose.yml" ]; do d=$(dirname "$d"); done
+  if [ -f "$d/docker-compose.yml" ]; then dirs["$d"]=1; fi
+done < <(git diff --name-only "$old" "$new")
+
+for d in "${!dirs[@]}"; do
+  if grep -Eq '^\s*env_file:.*\.env|^\s*-\s*\.env\s*$' "$d/docker-compose.yml" && [ ! -f "$d/.env" ]; then
+    echo "  skip $d (no .env on server)" >> "$LOG"; continue
+  fi
+  (
+    cd "$d"
+    if [ -f image-tag ]; then IMAGE_TAG=$(tr -d '[:space:]' < image-tag); export IMAGE_TAG; fi
+    docker compose pull -q && docker compose up -d --remove-orphans
+  ) >> "$LOG" 2>&1 && echo "  applied $d" >> "$LOG" || echo "  FAILED $d" >> "$LOG"
+done
+
+if [ "$reload" = 1 ]; then
+  docker exec caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile >> "$LOG" 2>&1 \
+    && echo "  caddy reloaded" >> "$LOG" || echo "  caddy reload FAILED" >> "$LOG"
+fi

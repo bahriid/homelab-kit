@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# homelab-health: find quiet failures, tell Telegram. Config in /etc/homelab-health.env.
+set -uo pipefail
+. /etc/homelab-health.env               # TG_TOKEN TG_CHAT HEALTH_MOUNTS DISK_MAX
+STATE=/var/lib/homelab-health; mkdir -p "$STATE"
+REPEAT=$((6 * 3600))
+host=$(hostname)
+
+send() {
+  curl -s -m 15 "https://api.telegram.org/bot$TG_TOKEN/sendMessage" \
+    --data-urlencode chat_id="$TG_CHAT" --data-urlencode text="$1" >/dev/null
+}
+[ "${1:-}" = --test ] && { send "✅ $host: test message from homelab-health"; exit 0; }
+
+declare -A now=()
+problem() { now["$1"]=1; }
+
+# mounts
+for m in ${HEALTH_MOUNTS:-}; do mountpoint -q "$m" || problem "$m is not mounted"; done
+
+# disk usage
+for m in / ${HEALTH_MOUNTS:-}; do
+  mountpoint -q "$m" || [ "$m" = / ] || continue
+  use=$(df --output=pcent "$m" | tail -1 | tr -dc 0-9)
+  [ "${use:-0}" -le "${DISK_MAX:-90}" ] || problem "disk $m above ${DISK_MAX:-90}%"
+done
+
+# containers
+while read -r name health restart status; do
+  [ "$health" = unhealthy ] && problem "container $name unhealthy"
+  case "$restart" in unless-stopped|always)
+    [ "$status" = exited ] && problem "container $name exited";;
+  esac
+done < <(docker ps -a --format '{{.Names}}' | xargs -r docker inspect -f \
+  '{{.Name}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} {{.HostConfig.RestartPolicy.Name}} {{.State.Status}}' \
+  | sed 's#^/##')
+
+# backup module
+if [ -f /var/log/homelab-backup.log ]; then
+  last=$(tail -1 /var/log/homelab-backup.log)
+  case "$last" in *" ok") ;; *) problem "last backup failed";; esac
+  ts=$(date -d "${last%% *}" +%s 2>/dev/null || echo 0)
+  [ $(( $(date +%s) - ts )) -lt 129600 ] || problem "no successful backup for 36h"
+fi
+
+# alert new or repeating problems, announce recoveries
+t=$(date +%s)
+for p in "${!now[@]}"; do
+  f="$STATE/$(printf '%s' "$p" | md5sum | cut -c1-16)"
+  if [ ! -f "$f" ] || [ $(( t - $(stat -c %Y "$f") )) -ge $REPEAT ]; then
+    send "⚠️ $host: $p" && printf '%s\n' "$p" > "$f"
+  fi
+done
+for f in "$STATE"/*; do
+  [ -f "$f" ] || continue
+  p=$(cat "$f")
+  [ -n "${now[$p]:-}" ] || { send "✅ $host: recovered: $p"; rm -f "$f"; }
+done
+
+exit 0

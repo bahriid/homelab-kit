@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# homelab-backup: nightly restic backup. Config in /etc/homelab-backup.env.
+set -euo pipefail
+set -a; . /etc/homelab-backup.env; set +a
+export RESTIC_PASSWORD_FILE=/root/.restic-pass
+STAGE=/var/backups/homelab
+rm -rf "$STAGE"; mkdir -p "$STAGE/sql" "$STAGE/volumes"
+status=0
+
+# database dumps, with the credentials each container already has
+for c in $(docker ps --format '{{.Names}} {{.Image}}' | awk '$2 ~ /(^|\/)postgres(:|$)/ {print $1}'); do
+  docker exec "$c" sh -c 'pg_dumpall -U "${POSTGRES_USER:-postgres}"' | gzip > "$STAGE/sql/$c.sql.gz" || status=1
+done
+for c in $(docker ps --format '{{.Names}} {{.Image}}' | awk '$2 ~ /(^|\/)(mysql|mariadb)(:|$)/ {print $1}'); do
+  docker exec "$c" sh -c 'exec mysqldump -uroot -p"${MYSQL_ROOT_PASSWORD:-$MARIADB_ROOT_PASSWORD}" --all-databases --single-transaction --quick' \
+    | gzip > "$STAGE/sql/$c.sql.gz" || status=1
+done
+
+# docker volumes
+for v in $(docker volume ls --format '{{.Name}}' | grep -E "${BACKUP_VOLUMES:-_data\$|caddy_data}" || true); do
+  mp=$(docker volume inspect -f '{{.Mountpoint}}' "$v")
+  # exit 1 = "file changed while reading", normal for a live volume
+  tar --warning=no-file-changed -czf "$STAGE/volumes/$v.tar.gz" -C "$mp" . || [ $? -eq 1 ] || status=1
+done
+
+# shellcheck disable=SC2086  # BACKUP_PATHS is a space separated list on purpose
+restic backup --quiet --tag homelab "$STAGE" ${BACKUP_PATHS} --exclude '.git' || status=1
+restic forget --quiet --keep-daily 7 --keep-weekly 4 --keep-monthly 6 --prune || status=1
+restic check --quiet --read-data-subset=5% || status=1
+
+echo "$(date -Is) $([ $status = 0 ] && echo ok || echo FAILED)" >> /var/log/homelab-backup.log
+exit $status
