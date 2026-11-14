@@ -13,6 +13,7 @@ need TG_TOKEN TG_CHAT
   printf 'TG_CHAT=%q\n' "$TG_CHAT"
   printf 'HEALTH_MOUNTS=%q\n' "${HEALTH_MOUNTS:-}"
   printf 'DISK_MAX=%q\n' "${DISK_MAX:-90}"
+  printf 'BACKUP_LOG=%q\n' "${BACKUP_LOG:-/var/log/homelab-backup.log}"
 } > "$conf"
 
 install -m 755 "$(dirname "$0")/homelab-health" /usr/local/bin/homelab-health

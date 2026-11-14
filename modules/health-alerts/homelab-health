@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # homelab-health: find quiet failures, tell Telegram. Config in /etc/homelab-health.env.
 set -uo pipefail
-. /etc/homelab-health.env               # TG_TOKEN TG_CHAT HEALTH_MOUNTS DISK_MAX
+. /etc/homelab-health.env               # TG_TOKEN TG_CHAT HEALTH_MOUNTS DISK_MAX [BACKUP_LOG]
 STATE=/var/lib/homelab-health; mkdir -p "$STATE"
 REPEAT=$((6 * 3600))
 host=$(hostname)
@@ -11,6 +11,8 @@ send() {
     --data-urlencode chat_id="$TG_CHAT" --data-urlencode text="$1" >/dev/null
 }
 [ "${1:-}" = --test ] && { send "✅ $host: test message from homelab-health"; exit 0; }
+# --dry: list current problems, send nothing, touch no state
+if [ "${1:-}" = --dry ]; then DRY=1; send() { echo "$1"; }; else DRY=0; fi
 
 declare -A now=()
 problem() { now["$1"]=1; }
@@ -35,13 +37,16 @@ done < <(docker ps -a --format '{{.Names}}' | xargs -r docker inspect -f \
   '{{.Name}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} {{.HostConfig.RestartPolicy.Name}} {{.State.Status}}' \
   | sed 's#^/##')
 
-# backup module
-if [ -f /var/log/homelab-backup.log ]; then
-  last=$(tail -1 /var/log/homelab-backup.log)
-  case "$last" in *" ok") ;; *) problem "last backup failed";; esac
-  ts=$(date -d "${last%% *}" +%s 2>/dev/null || echo 0)
+# backup log: last line "<ISO date> ok ..." (backup-restic module, or BACKUP_LOG for your own script)
+blog="${BACKUP_LOG:-/var/log/homelab-backup.log}"
+if [ -f "$blog" ]; then
+  read -r stamp result _ < <(tail -1 "$blog")
+  [ "${result:-}" = ok ] || problem "last backup failed"
+  ts=$(date -d "${stamp:-}" +%s 2>/dev/null || echo 0)
   [ $(( $(date +%s) - ts )) -lt 129600 ] || problem "no successful backup for 36h"
 fi
+
+if [ "$DRY" = 1 ]; then for p in "${!now[@]}"; do echo "problem: $p"; done; exit 0; fi
 
 # alert new or repeating problems, announce recoveries
 t=$(date +%s)

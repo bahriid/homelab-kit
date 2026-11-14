@@ -7,6 +7,7 @@ asks:
   - TG_CHAT: chat id that receives alerts (send the bot a message, then open https://api.telegram.org/bot<TOKEN>/getUpdates)
   - HEALTH_MOUNTS: mount points that must be mounted, space separated, e.g. "/mnt/hdd /mnt/backup"
   - DISK_MAX: alert above this % used (default 90)
+  - BACKUP_LOG: optional, your own backup script's log if it writes lines like "<ISO date> ok ..." (default /var/log/homelab-backup.log)
 ---
 
 # health-alerts
@@ -27,7 +28,7 @@ a container stuck "unhealthy". This module checks every 10 minutes and messages 
 | Containers with a healthcheck | `unhealthy` |
 | Containers with `restart: unless-stopped/always` | exited |
 | Root disk and each mount | above `DISK_MAX` % |
-| `/var/log/homelab-backup.log` (if the backup module is installed) | last line not `ok`, or older than 36 h |
+| `BACKUP_LOG` (if it exists) | last line not `ok`, or older than 36 h |
 
 The same alert repeats at most every 6 hours, and you get one "recovered" message when it clears.
 
@@ -43,6 +44,7 @@ put it there.
 ## Verify
 
 ```bash
+sudo homelab-health --dry       # lists current problems, sends nothing
 sudo homelab-health --test      # sends "test message" to Telegram
 bash modules/health-alerts/check.sh
 ```
