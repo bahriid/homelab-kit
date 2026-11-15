@@ -4,7 +4,7 @@ Pick-and-choose modules for a home server, written so your AI coding agent can i
 Tell Claude Code, Codex or Gemini CLI: **"install navidrome from github.com/bahriid/homelab-kit"**,
 and it reads the module, asks you a few questions, and sets it up on your machine.
 
-> 🇮🇩 Seri artikel lengkapnya (bahasa Indonesia): [Server rumah rasa production](https://bahri.id/blog/home-server-rasa-production)
+> 🇮🇩 Seri tutorial lengkapnya (bahasa Indonesia, 10 artikel): [Home server sendiri, dari nol](https://bahri.id/blog/home-server-perlu-ngga-dan-biayanya)
 
 ## How to use it
 

@@ -4,7 +4,7 @@ summary: Push to your git repo, the server applies it within a minute. The serve
 requires: [base]
 asks:
   - GITOPS_REPO: SSH clone URL of the person's own stack repo, e.g. git@github.com:me/homelab.git
-  - GITOPS_DIR: where to clone it on the server (default /srv/infra)
+  - GITOPS_DIR: where the stack lives on the server (default $HOMELAB_DIR, /srv/homelab). If the folder already holds the stack, the script attaches the repo's history to it without overwriting files.
   - GITOPS_BRANCH: branch to follow (default main)
 ---
 

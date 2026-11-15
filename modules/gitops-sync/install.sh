@@ -2,7 +2,7 @@
 # gitops-sync: deploy key + clone + homelab-sync timer.
 . "$(dirname "$0")/../../lib/common.sh"
 need GITOPS_REPO
-GITOPS_DIR="${GITOPS_DIR:-/srv/infra}"
+GITOPS_DIR="${GITOPS_DIR:-$HOMELAB_DIR}"
 GITOPS_BRANCH="${GITOPS_BRANCH:-main}"
 key="$HOME/.ssh/homelab_deploy"
 
@@ -30,7 +30,18 @@ if [ ! -d "$GITOPS_DIR/.git" ]; then
   fi
   as_root mkdir -p "$GITOPS_DIR"
   as_root chown "$(id -u):$(id -g)" "$GITOPS_DIR"
-  git clone -q -b "$GITOPS_BRANCH" "$url" "$GITOPS_DIR"
+  if [ -z "$(ls -A "$GITOPS_DIR")" ]; then
+    git clone -q -b "$GITOPS_BRANCH" "$url" "$GITOPS_DIR"
+  else
+    # folder already holds the stack (plus .env files): attach the history without overwriting anything
+    tmp="$(mktemp -d)"
+    git clone -q --no-checkout -b "$GITOPS_BRANCH" "$url" "$tmp/repo"
+    mv "$tmp/repo/.git" "$GITOPS_DIR/.git"; rm -rf "$tmp"
+    git -C "$GITOPS_DIR" reset -q
+    if [ -n "$(git -C "$GITOPS_DIR" status --porcelain --untracked-files=no)" ]; then
+      warn "files in $GITOPS_DIR differ from the repo (git status). Commit them from the laptop first, or homelab-sync will refuse to fast-forward."
+    fi
+  fi
 fi
 
 as_root install -m 755 "$(dirname "$0")/homelab-sync" /usr/local/bin/homelab-sync
